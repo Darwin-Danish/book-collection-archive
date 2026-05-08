@@ -1,0 +1,24 @@
+name: Debug DB Connection
+
+on:
+  workflow_dispatch: # Allows you to run this manually from the Actions tab
+
+jobs:
+  check-env:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify DB_URL
+        env:
+          # This pulls the value from your Repository Secrets
+          DB_URL: ${{ secrets.DB_URL }} 
+        run: |
+          if [ -z "$DB_URL" ]; then
+            echo "Error: DB_URL is empty or not set in Secrets."
+            exit 1
+          else
+            echo "DB_URL is set! (Value is masked for security)"
+            echo "The variable contains: $DB_URL"
+          fi
