@@ -51,25 +51,33 @@ jobs:
           ollama pull qwen3:4b
 
       - name: Clone Database Repository
-        env:
-          DB_URL: ${{ secrets.DB_URL }}
-        run: |
-          git clone $DB_URL core_repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.PRIVATE_REPO }}
+          token: ${{ secrets.DB_REPO_PAT }}
+          path: core_repo
+          persist-credentials: true
 
       - name: Run Background Collection
         run: |
+          if [ ! -d "core_repo" ]; then
+            echo "❌ ERROR: core_repo directory was not created. Check token permissions."
+            exit 1
+          fi
           cd core_repo
           python rpi_daemon/collector_daemon.py --one-shot > /dev/null 2>&1
 
       - name: Sync Database Updates
-        env:
-          DB_URL: ${{ secrets.DB_URL }}
         run: |
           cd core_repo
-          git config --global user.name "github-actions-collector[bot]"
-          git config --global user.email "github-actions-collector[bot]@users.noreply.github.com"
+          git config user.name "github-actions-collector[bot]"
+          git config user.email "github-actions-collector[bot]@users.noreply.github.com"
+          
           git add ains.db
           if ! git diff-index --quiet HEAD; then
             git commit -m "Auto-update reading logs from background worker"
-            git push origin main
+            # Use a robust push that handles any default branch
+            git push
+          else
+            echo "No changes to the database."
           fi
