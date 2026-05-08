@@ -30,7 +30,7 @@ jobs:
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install beautifulsoup4 feedparser requests google-genai openai zstandard
+          pip install beautifulsoup4 feedparser requests google-genai openai zstandard python-dotenv
 
       - name: Cache Ollama Models
         uses: actions/cache@v4
@@ -59,6 +59,8 @@ jobs:
           persist-credentials: true
 
       - name: Run Background Collection
+        env:
+          PYTHONPATH: ${{ github.workspace }}/core_repo
         run: |
           if [ ! -d "core_repo" ]; then
             echo "❌ ERROR: core_repo directory was not created. Check token permissions."
