@@ -1,1 +1,75 @@
+name: Content Collector (Public Worker)
 
+on:
+  schedule:
+    - cron: '0 */4 * * *'
+  workflow_dispatch:
+
+jobs:
+  collect-and-summarize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache Pip Dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install beautifulsoup4 feedparser requests google-genai openai
+
+      - name: Cache Ollama Models
+        uses: actions/cache@v4
+        with:
+          path: ~/.ollama
+          key: ${{ runner.os }}-ollama-qwen3-4b
+          restore-keys: |
+            ${{ runner.os }}-ollama-
+
+      - name: Install Ollama
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+          ollama serve &
+          echo "Waiting for Ollama..."
+          while ! curl -s http://localhost:11434/api/tags > /dev/null; do
+            sleep 1
+          done
+          ollama pull qwen3:4b
+
+      - name: Clone Database Repository
+        env:
+          DB_URL: ${{ secrets.DB_URL }}
+        run: |
+          git clone $DB_URL core_repo
+
+      - name: Run Background Collection
+        run: |
+          cd core_repo
+          python rpi_daemon/collector_daemon.py --one-shot > /dev/null 2>&1
+
+      - name: Sync Database Updates
+        env:
+          DB_URL: ${{ secrets.DB_URL }}
+        run: |
+          cd core_repo
+          git config --global user.name "github-actions-collector[bot]"
+          git config --global user.email "github-actions-collector[bot]@users.noreply.github.com"
+          git add ains.db
+          if ! git diff-index --quiet HEAD; then
+            git commit -m "Auto-update reading logs from background worker"
+            git push origin main
+          fi
