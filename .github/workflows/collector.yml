@@ -1,4 +1,4 @@
-name: Content Collector (Public Worker)
+name: Book Collection Worker
 
 on:
   schedule:
@@ -13,6 +13,8 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -23,7 +25,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          key: ${{ runner.os }}-pip-collector
           restore-keys: |
             ${{ runner.os }}-pip-
 
@@ -50,7 +52,7 @@ jobs:
           done
           ollama pull qwen3:4b
 
-      - name: Clone Database Repository
+      - name: Clone Source Repository
         uses: actions/checkout@v4
         with:
           repository: ${{ secrets.PRIVATE_REPO }}
@@ -58,28 +60,62 @@ jobs:
           path: core_repo
           persist-credentials: true
 
-      - name: Run Background Collection
+      - name: Run Collection
         env:
           PYTHONPATH: ${{ github.workspace }}/core_repo
         run: |
-          if [ ! -d "core_repo" ]; then
-            echo "❌ ERROR: core_repo directory was not created. Check token permissions."
-            exit 1
-          fi
           cd core_repo
           python rpi_daemon/collector_daemon.py --one-shot
 
-      - name: Sync Database Updates
+      - name: Push Full Database to Source
         run: |
           cd core_repo
           git config user.name "github-actions-collector[bot]"
           git config user.email "github-actions-collector[bot]@users.noreply.github.com"
-          
           git add ains.db
           if ! git diff-index --quiet HEAD; then
-            git commit -m "Auto-update reading logs from background worker"
-            # Use a robust push that handles any default branch
+            git commit -m "Auto-update database from collection worker"
             git push
-          else
-            echo "No changes to the database."
+          fi
+
+      - name: Create Sanitized Public Database
+        run: |
+          python3 << 'EOF'
+          import sqlite3, shutil, os
+
+          src = "core_repo/ains.db"
+          dst = "collection.db"
+          if not os.path.exists(src):
+              print("No database found, skipping sanitization.")
+              exit(0)
+
+          shutil.copy2(src, dst)
+          conn = sqlite3.connect(dst)
+          c = conn.cursor()
+
+          # Remove sensitive tracking columns from books
+          c.execute("CREATE TABLE IF NOT EXISTS books_clean AS SELECT id, safe_title, title, writer, publisher, pages, summary, learned, language FROM books")
+          c.execute("DROP TABLE IF EXISTS books")
+          c.execute("ALTER TABLE books_clean RENAME TO books")
+
+          # Remove sensitive tracking columns from web_articles
+          c.execute("CREATE TABLE IF NOT EXISTS web_clean AS SELECT id, safe_title, title, publisher, language, link, summary, moral FROM web_articles")
+          c.execute("DROP TABLE IF EXISTS web_articles")
+          c.execute("ALTER TABLE web_clean RENAME TO web_articles")
+
+          conn.commit()
+          conn.execute("VACUUM")
+          conn.close()
+          print("Sanitized database created successfully.")
+          EOF
+
+      - name: Commit Sanitized Database to Public Repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          mv collection.db collection.db 2>/dev/null || true
+          git add collection.db
+          if ! git diff-index --quiet HEAD; then
+            git commit -m "Update book collection database"
+            git push
           fi
